@@ -16,7 +16,7 @@ class PhilosopherState(MessagesState):
 # Giả lập các hàm phụ trợ
 def get_philosopher_response_chain():
     async def chain(messages, summary):
-        return messages + ["Response: I am a philosopher."]
+        return messages + [{"role": "assistant", "content": "Response: I am a philosopher."}]
     return chain
 
 def get_conversation_summary_chain(summary):
@@ -27,12 +27,10 @@ def get_conversation_summary_chain(summary):
 def create_simple_workflow_graph() -> StateGraph:
     graph_builder = StateGraph(PhilosopherState)
 
-    # Add the essential nodes
     graph_builder.add_node("conversation_node", conversation_node)
     graph_builder.add_node("summarize_conversation_node", summarize_conversation_node)
     
-    # Define the simplified flow
-    graph_builder.add_edge("__start__", "conversation_node")  # Thay START bằng "__start__"
+    graph_builder.add_edge("__start__", "conversation_node")
     graph_builder.add_conditional_edges(
         "conversation_node",
         should_summarize_conversation,
@@ -44,31 +42,25 @@ def create_simple_workflow_graph() -> StateGraph:
 async def conversation_node(state: PhilosopherState) -> PhilosopherState:
     summary = state.get("summary", "")
     conversation_chain = get_philosopher_response_chain()
-    
     response = await conversation_chain(messages=state["messages"], summary=summary)
-    
     return {"messages": response}
 
 async def summarize_conversation_node(state: PhilosopherState) -> PhilosopherState:
     summary = state.get("summary", "")
     summary_chain = get_conversation_summary_chain(summary)
-    
     response = await summary_chain(
         messages=state["messages"],
         philosopher_name=state.get("philosopher_name", "unknown"),
         summary=summary,
     )
-    
-    # Loại bỏ các tin nhắn cũ thủ công
     remaining_messages = state["messages"][-settings.TOTAL_MESSAGES_AFTER_SUMMARY:] if len(state["messages"]) > settings.TOTAL_MESSAGES_AFTER_SUMMARY else state["messages"]
     return {"summary": response, "messages": remaining_messages}
 
 def should_summarize_conversation(state: PhilosopherState) -> Literal["summarize_conversation_node", "__end__"]:
     messages = state["messages"]
-    
+    print(f"Checking messages length: {len(messages)}")  # Debug
     if len(messages) >= settings.TOTAL_MESSAGES_SUMMARY_TRIGGER:
         return "summarize_conversation_node"
-    
     return "__end__"
 
 import asyncio
@@ -76,9 +68,24 @@ graph_builder = create_simple_workflow_graph()
 graph = graph_builder.compile()
 
 async def main():
-     messages = await graph.ainvoke({"messages": ["Hello, how are you?"]})
-     for message in messages["messages"]:
-         print(message)
+    initial_messages = [
+        {"role": "user", "content": "Hello"}, {"role": "user", "content": "How are you?"}, {"role": "user", "content": "Tell me more"},
+        {"role": "user", "content": "What’s next?"}, {"role": "user", "content": "Great!"}, {"role": "user", "content": "More details?"},
+        {"role": "user", "content": "Thanks!"}, {"role": "user", "content": "Continue?"}, {"role": "user", "content": "Awesome!"},
+        {"role": "user", "content": "Last one?"}
+    ]
+    print("=== Initial Conversation ===")
+    async for event in graph.astream({"messages": initial_messages, "philosopher_name": "Epicurus"}):
+        for value in event.values():
+            if "messages" in value:
+                for message in value["messages"]:
+                    if isinstance(message, dict):
+                        print(message.get("content", "Unknown content"))
+                    else:
+                        print(message.content)  # For HumanMessage/AIMessage objects
+            if "summary" in value:
+                print("=== Summary ===")
+                print(value["summary"])
 
 if __name__ == "__main__":
     asyncio.run(main())
